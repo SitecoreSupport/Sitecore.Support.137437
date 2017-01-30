@@ -1,54 +1,142 @@
-﻿using Sitecore.Abstractions;
+﻿using System;
+using Sitecore.Diagnostics;
+using Sitecore.Events;
+using Sitecore.Abstractions;
 using Sitecore.Collections;
-using Sitecore.Configuration;
-using Sitecore.ContentSearch;
 using Sitecore.ContentSearch.Maintenance;
 using Sitecore.Data;
-using Sitecore.Diagnostics;
-using System;
-using System.Runtime.CompilerServices;
+using Sitecore.Data.Events;
+using Sitecore.Configuration;
+using Sitecore.ContentSearch;
 
 namespace Sitecore.Support.ContentSearch.Maintenance
 {
-    public class IndexDatabasePropertyStore : IIndexPropertyStore
+    /// <summary>
+    /// The index database property store.
+    /// </summary>
+    public class IndexDatabasePropertyStore : IIndexPropertyStore, IIndexPropertyStoreEx
     {
-        private SafeDictionary<string, string> defaultValues;
-        private readonly IEvent events;
-        private readonly IFactory factory;
-        private Sitecore.Data.Database innerStore;
+        /// <summary>
+        /// The inner store.
+        /// </summary>
+        private Database innerStore;
 
-        public IndexDatabasePropertyStore() : this(ContentSearchManager.Locator.GetInstance<IEvent>(), ContentSearchManager.Locator.GetInstance<IFactory>())
+        private readonly IEvent events;
+
+        private readonly IFactory factory;
+
+        private SafeDictionary<string, string> defaultValues = new SafeDictionary<string, string>();
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="IndexDatabasePropertyStore"/> class.
+        /// </summary>
+        public IndexDatabasePropertyStore()
+            : this(ContentSearchManager.Locator.GetInstance<IEvent>(), ContentSearchManager.Locator.GetInstance<IFactory>())
         {
         }
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="IndexDatabasePropertyStore"/> class.
+        /// </summary>
+        /// <param name="events">The events.</param>
+        /// <param name="factory">The factory. </param>
         internal IndexDatabasePropertyStore(IEvent events, IFactory factory)
         {
-            this.defaultValues = new SafeDictionary<string, string>();
             this.events = events;
             this.factory = factory;
             this.SuppressPropertyChangedEvents = true;
         }
 
+        /// <summary>
+        /// Gets the inner store.
+        /// </summary>
+        protected Database InnerStore
+        {
+            get
+            {
+                if (this.innerStore != null)
+                {
+                    return this.innerStore;
+                }
+
+                Assert.IsNotNull(this.Database, "Database is not set");
+                Assert.IsTrue((this.factory ?? ContentSearchManager.Locator.GetInstance<IFactory>()).GetDatabase(this.Database) != null, "Cannot find the inner store database");
+                this.innerStore = (this.factory ?? ContentSearchManager.Locator.GetInstance<IFactory>()).GetDatabase(this.Database);
+                return this.innerStore;
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the key.
+        /// </summary>
+        public string Key { get; set; }
+
+        /// <summary>
+        /// Suppress PropertyChanged events
+        /// </summary>
+        public bool SuppressPropertyChangedEvents { get; set; }
+
+        /// <summary>
+        /// Gets the master key.
+        /// </summary>
+        public string MasterKey
+        {
+            get
+            {
+                return string.Format("{0}_{1}", this.Key, Settings.InstanceName);
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the database.
+        /// </summary>
+        public string Database { get; set; }
+
+        /// <summary>
+        /// The add.
+        /// </summary>
+        /// <param name="key">
+        /// The key.
+        /// </param>
+        /// <param name="value">
+        /// The value.
+        /// </param>
         public void Add(string key, string value)
         {
-            string str = this.MasterKey + "_" + key;
-            string str2 = this.InnerStore.Properties[str];
-            using (new PropertyChangedEventDisabler(this.SuppressPropertyChangedEvents))
-            {
-                this.InnerStore.Properties[str] = string.IsNullOrEmpty(str2) ? value : (str2 + "," + value);
-            }
-            object[] parameters = new object[] { str, value };
-            (this.events ?? ContentSearchManager.Locator.GetInstance<IEvent>()).RaiseEvent("indexing:propertyadd", parameters);
+            this.Add(key, value, (propertyKey, propertyValue) => { (this.events ?? ContentSearchManager.Locator.GetInstance<IEvent>()).RaiseEvent("indexing:propertyadd", propertyKey, propertyValue); });
         }
 
-        public void Clear(string prefix)
+        /// <summary>
+        /// The set.
+        /// </summary>
+        /// <param name="key">
+        /// The key.
+        /// </param>
+        /// <param name="value">
+        /// The value.
+        /// </param>
+        public void Set(string key, string value)
         {
-            using (new PropertyChangedEventDisabler(this.SuppressPropertyChangedEvents))
-            {
-                this.InnerStore.Properties.RemovePrefix(this.MasterKey + "_" + prefix);
-            }
+            this.Set(key, value, (propertyKey, propertyValue) => { (this.events ?? ContentSearchManager.Locator.GetInstance<IEvent>()).RaiseEvent("indexing:propertyset", propertyKey, propertyValue); });
         }
 
+        /// <summary>
+        /// The get.
+        /// </summary>
+        /// <param name="key">
+        /// The key.
+        /// </param>
+        /// <returns>
+        /// The <see cref="string"/>.
+        /// </returns>
+        public string Get(string key)
+        {
+            return this.Get(key, ((propertyKey, propertyValue) => { (this.events ?? ContentSearchManager.Locator.GetInstance<IEvent>()).RaiseEvent("indexing:propertyget", propertyKey, propertyValue); }));
+        }
+
+        /// <summary>
+        /// The clear all.
+        /// </summary>
         public void ClearAll()
         {
             using (new PropertyChangedEventDisabler(this.SuppressPropertyChangedEvents))
@@ -57,63 +145,104 @@ namespace Sitecore.Support.ContentSearch.Maintenance
             }
         }
 
-        public string Get(string key)
+        /// <summary>
+        /// The clear.
+        /// </summary>
+        /// <param name="prefix">
+        /// The prefix.
+        /// </param>
+        public void Clear(string prefix)
         {
-            string str2;
-            string str = this.MasterKey + "_" + key;
-            if (this.defaultValues.ContainsKey(str))
-            {
-                str2 = this.defaultValues[str];
-            }
-            else
-            {
-                str2 = this.InnerStore.Properties[str];
-                if (string.IsNullOrEmpty(str2))
-                {
-                    this.defaultValues[str] = str2;
-                }
-            }
-            object[] parameters = new object[] { str, str2 };
-            //(this.events ?? ContentSearchManager.Locator.GetInstance<IEvent>()).RaiseEvent("indexing:propertyget", parameters);
-            return str2;
-        }
-
-        public void Set(string key, string value)
-        {
-            string str = this.MasterKey + "_" + key;
             using (new PropertyChangedEventDisabler(this.SuppressPropertyChangedEvents))
             {
-                this.InnerStore.Properties[str] = value;
-                if (this.defaultValues.ContainsKey(str))
-                {
-                    this.defaultValues.Remove(str);
-                }
+                this.InnerStore.Properties.RemovePrefix(this.MasterKey + "_" + prefix);
             }
-            object[] parameters = new object[] { str, value };
-            //(this.events ?? ContentSearchManager.Locator.GetInstance<IEvent>()).RaiseEvent("indexing:propertyset", parameters);
         }
 
-        public string Database { get; set; }
-
-        protected Sitecore.Data.Database InnerStore
+        /// <summary>
+        /// Add into database property Store
+        /// </summary>
+        /// <param name="key"></param>
+        /// <param name="value"></param>
+        /// <param name="postAction"></param>
+        public void Add(string key, string value, Action<string, string> postAction)
         {
-            get
+            var propertyKey = this.MasterKey + "_" + key;
+            var existing = this.InnerStore.Properties[propertyKey];
+            using (new PropertyChangedEventDisabler(this.SuppressPropertyChangedEvents))
             {
-                if (this.innerStore == null)
-                {
-                    Assert.IsNotNull(this.Database, "Database is not set");
-                    Assert.IsTrue((this.factory ?? ContentSearchManager.Locator.GetInstance<IFactory>()).GetDatabase(this.Database) != null, "Cannot find the inner store database");
-                    this.innerStore = (this.factory ?? ContentSearchManager.Locator.GetInstance<IFactory>()).GetDatabase(this.Database);
-                }
-                return this.innerStore;
+                this.InnerStore.Properties[propertyKey] = string.IsNullOrEmpty(existing) ? value : existing + "," + value;
+            }
+
+            if (postAction != null)
+            {
+                postAction.Invoke(propertyKey, value);
             }
         }
 
-        public string Key { get; set; }
+        /// <summary>
+        /// Set value into database property store
+        /// </summary>
+        /// <param name="key"></param>
+        /// <param name="value"></param>
+        /// <param name="postAction"></param>
+        public void Set(string key, string value, Action<string, string> postAction)
+        {
+            var propertyKey = this.MasterKey + "_" + key;
+            using (new PropertyChangedEventDisabler(this.SuppressPropertyChangedEvents))
+            {
+                this.InnerStore.Properties[propertyKey] = value;
+                if (this.defaultValues.ContainsKey(propertyKey)) this.defaultValues.Remove(propertyKey);
+            }
 
-        public string MasterKey =>
-            $"{this.Key}_{Settings.InstanceName}";
+            if (postAction != null)
+            {
+                postAction.Invoke(propertyKey, value);
+            }
+        }
 
-        public bool SuppressPropertyChangedEvents { get; set; }
+        public string Get(string key, Action<string, string> postAction)
+        {
+            var propertyKey = this.MasterKey + "_" + key;
+            string value;
+            if (this.defaultValues.ContainsKey(propertyKey))
+                value = this.defaultValues[propertyKey];
+            else
+            {
+                value = this.InnerStore.Properties[propertyKey];
+                if (string.IsNullOrEmpty(value)) this.defaultValues[propertyKey] = value;
+            }
+
+            if (postAction != null)
+            {
+                postAction.Invoke(propertyKey, value);
+            }
+
+            return value;
+        }
+    }
+
+    /// <summary>
+    /// Property changed event disabler.
+    /// </summary>
+    internal class PropertyChangedEventDisabler : IDisposable
+    {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="PropertyChangedEventDisabler"/> class. 
+        /// Property changed event disabler.
+        /// </summary>
+        public PropertyChangedEventDisabler(bool state)
+        {
+            EventDisablerState disablerState = state ? EventDisablerState.Enabled : EventDisablerState.Disabled;
+            EventDisabler.Enter(disablerState);
+        }
+
+        /// <summary>
+        /// Dispose event disabler.
+        /// </summary>
+        public void Dispose()
+        {
+            EventDisabler.Exit();
+        }
     }
 }
