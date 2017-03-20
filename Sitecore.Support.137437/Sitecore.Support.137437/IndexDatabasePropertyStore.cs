@@ -73,9 +73,7 @@ namespace Sitecore.Support.ContentSearch.Maintenance
                     this.defaultValues[str] = str2;
                 }
             }
-            object[] parameters = new object[] { str, str2 };
-            //(this.events ?? ContentSearchManager.Locator.GetInstance<IEvent>()).RaiseEvent("indexing:propertyget", parameters);
-            return str2;
+              return str2;
         }
 
         public void Set(string key, string value)
@@ -89,9 +87,7 @@ namespace Sitecore.Support.ContentSearch.Maintenance
                     this.defaultValues.Remove(str);
                 }
             }
-            object[] parameters = new object[] { str, value };
-            //(this.events ?? ContentSearchManager.Locator.GetInstance<IEvent>()).RaiseEvent("indexing:propertyset", parameters);
-        }
+         }
 
         public string Database { get; set; }
 
